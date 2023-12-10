@@ -55,6 +55,9 @@ try:
         FlashSantacoderSharded,
     )
     from text_generation_server.models.idefics import IDEFICSSharded
+    from text_generation_server.models.flash_chatglm import (
+        FlashChatGLM,
+    )
 
 except ImportError as e:
     logger.warning(f"Could not import Flash Attention enabled models: {e}")
@@ -209,6 +212,25 @@ def get_model(
             )
         elif sharded:
             raise NotImplementedError(FLASH_ATT_ERROR_MESSAGE.format("Sharded Llama"))
+        else:
+            return CausalLM(
+                model_id,
+                revision,
+                quantize=quantize,
+                dtype=dtype,
+                trust_remote_code=trust_remote_code,
+            )
+    elif model_type == "chatglm":
+        if FLASH_ATTENTION:
+            return FlashChatGLM(
+                model_id,
+                revision,
+                quantize=quantize,
+                dtype=dtype,
+                trust_remote_code=trust_remote_code,
+            )
+        elif sharded:
+            raise NotImplementedError(FLASH_ATT_ERROR_MESSAGE.format("Sharded ChatGLM"))
         else:
             return CausalLM(
                 model_id,

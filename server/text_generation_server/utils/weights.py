@@ -119,6 +119,74 @@ class Weights:
         ), f"The choosen size {size} is not compatible with sharding on {world_size} shards"
         return self.get_partial_sharded(tensor_name, dim)
 
+    def get_sharded_col_packed(self, tensor_name: str, dim: int, size_lst: List[int]):
+        """Used when the weight matrix is concatenated along the output dimension.
+        """
+        world_size = self.process_group.size()
+        rank = self.process_group.rank()
+        slice_ = self._get_slice(tensor_name)
+
+        tensor_lst = []
+        offset = 0
+        for size in size_lst:
+            size_per_shard = size // world_size
+            start = offset + rank * size_per_shard
+            stop = start + size_per_shard
+            if dim == 0:
+                tensor_lst.append(slice_[start:stop])
+            elif dim == 1:
+                tensor_lst.append(slice_[:, start:stop])
+            else:
+                raise NotImplementedError("Let's make that generic when needed")
+            offset += size
+
+        tensor = torch.cat(tensor_lst, dim=0)
+        return tensor.to(device=self.device, dtype=self.dtype)
+
+    def get_sharded_col_packed_qkv(self, tensor_name: str, dim: int, num_heads: int, num_kv_heads: int, head_size: int):
+        """Used when the qkv weight matrix is concatenated along the output dimension.
+        """
+        world_size = self.process_group.size()
+        rank = self.process_group.rank()
+        slice_ = self._get_slice(tensor_name)
+
+        num_heads_per_shard = num_heads // world_size
+        if num_kv_heads >= world_size:
+            num_kv_heads_per_shard = num_kv_heads // world_size
+            repeats = 1
+        else:
+            num_kv_heads_per_shard = 1
+            repeats = world_size // num_kv_heads_per_shard
+
+        size_per_shard_q = num_heads_per_shard * head_size
+        size_per_shard_kv = num_kv_heads_per_shard * head_size
+
+        offset_q = 0
+        start_q = offset_q + rank * size_per_shard_q
+        stop_q = start_q + size_per_shard_q
+
+        rank_kv = rank // repeats
+        offset_k = num_heads * head_size
+        start_k = offset_k + rank_kv * size_per_shard_kv
+        stop_k = start_k + size_per_shard_kv
+        offset_v = offset_k + num_kv_heads * head_size
+        start_v = offset_v + rank_kv * size_per_shard_kv
+        stop_v = start_v + size_per_shard_kv
+
+        if dim == 0:
+            tensor_q = slice_[start_q:stop_q]
+            tensor_k = slice_[start_k:stop_k]
+            tensor_v = slice_[start_v:stop_v]
+        elif dim == 1:
+            tensor_q = slice_[:, start_q:stop_q]
+            tensor_k = slice_[:, start_k:stop_k]
+            tensor_v = slice_[:, start_v:stop_v]
+        else:
+            raise NotImplementedError("Let's make that generic when needed")
+
+        tensor = torch.cat([tensor_q, tensor_k, tensor_v], dim=0)
+        return tensor.to(device=self.device, dtype=self.dtype)
+
     def _get_qweight(self, name: str):
         slice_ = self._get_slice(name)
         total_size = slice_.get_shape()[1]

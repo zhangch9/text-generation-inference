@@ -18,7 +18,7 @@ except ImportError:
 from accelerate import init_empty_weights
 
 from text_generation_server.utils.gptq.quant_linear import QuantLinear
-from text_generation_server.utils.import_utils import IS_CUDA_SYSTEM, IS_ROCM_SYSTEM 
+from text_generation_server.utils.import_utils import IS_CUDA_SYSTEM, IS_ROCM_SYSTEM
 
 HAS_AWQ = True
 try:
@@ -43,7 +43,7 @@ if os.getenv("DISABLE_EXLLAMA") == "True":
 elif CAN_EXLLAMA:
     try:
         if V2:
-            from text_generation_server.utils.gptq.exllamav2 import (QuantLinear as ExllamaQuantLinear, 
+            from text_generation_server.utils.gptq.exllamav2 import (QuantLinear as ExllamaQuantLinear,
                     create_exllama_buffers,
                     set_device,
                                                                      )
@@ -601,18 +601,23 @@ try:
             self.scaling_factor = scaling_factor
             self.dynamic_args = None
 
-        def forward(self, query: torch.Tensor, key: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor):
+        def forward(self, query: torch.Tensor, key: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor, is_neox: bool = True):
             # Such controlflows may add some overhead.
             if IS_CUDA_SYSTEM:
-                rotary_dim = cos.shape[-1]
-                q1 = query[..., :rotary_dim]
-                q2 = query[..., rotary_dim : 2 * rotary_dim]
+                if is_neox:
+                    rotary_dim = cos.shape[-1]
+                    q1 = query[..., :rotary_dim]
+                    q2 = query[..., rotary_dim : 2 * rotary_dim]
+                    k1 = key[..., :rotary_dim]
+                    k2 = key[..., rotary_dim : 2 * rotary_dim]
+                else:
+                    rotary_dim = cos.shape[-1] * 2
+                    q1 = query[..., 0:rotary_dim:2]
+                    q2 = query[..., 1: rotary_dim : 2]
+                    k1 = key[..., 0:rotary_dim: 2]
+                    k2 = key[..., 1: rotary_dim : 2]
 
                 rotary_emb.apply_rotary(q1, q2, cos, sin, q1, q2, False)
-
-                k1 = key[..., :rotary_dim]
-                k2 = key[..., rotary_dim : 2 * rotary_dim]
-
                 rotary_emb.apply_rotary(k1, k2, cos, sin, k1, k2, False)
             elif IS_ROCM_SYSTEM:
                 # NOTE: On RoCm systems, we use a ROPE implementatation adapted from VLLM which launches a single kernel for both query/key, contrary to flash-attn implementation used on NVIDIA systems.
@@ -627,7 +632,7 @@ try:
                     head_size,
                     cos,
                     sin,
-                    True
+                    is_neox,
                 )
             else:
                 raise ValueError("Your system seem to be not supported. Please check your install or open an issue at https://github.com/huggingface/text-generation-inference/issues with a clear reproduction.")
@@ -755,7 +760,7 @@ try:
             self.max_position_embeddings = max_position_embeddings
             self.base = base
 
-        def _update_cos_sin_cache(self, dtype, device, seqlen):            
+        def _update_cos_sin_cache(self, dtype, device, seqlen):
             # Reset the tables if the sequence length has changed,
             # or if we're on a new device (possibly due to tracing for instance)
             if (
