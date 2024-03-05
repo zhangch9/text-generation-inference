@@ -156,7 +156,7 @@ class Weights:
             repeats = 1
         else:
             num_kv_heads_per_shard = 1
-            repeats = world_size // num_kv_heads_per_shard
+            repeats = world_size // num_kv_heads
 
         size_per_shard_q = num_heads_per_shard * head_size
         size_per_shard_kv = num_kv_heads_per_shard * head_size
